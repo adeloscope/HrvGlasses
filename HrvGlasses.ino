@@ -25,14 +25,14 @@
 
 //  VARIABLES
 int pulsePin = 0;          // pulse sensor purple wire connected to analog pin 0
-int fadeRate = 0;          // used to fade LED on PWM pin 11
 #define LEDR_PIN 3
 #define LEDG_PIN 5
 #define LEDB_PIN 6
-#define NUM_RGB_COLORS 511 // the total number of possible RGB combos fading from r -> g -> b with constant power
+#define NUM_RGB_COLORS 256 // the total number of possible RGB combos fading from r -> g -> b with constant power
 #define RED 0
 #define GREEN 1
 #define BLUE 2
+#define ANALOG_OUT_MAX 255
 unsigned char rgbColorMap[NUM_RGB_COLORS][3];
 #define HRV_HISTORY_LENGTH 15  // how many pulses to keep track of
 int hrvHistory[HRV_HISTORY_LENGTH];  // maintains a history the bpm as calculated based on the hrv for each beat
@@ -43,19 +43,19 @@ volatile int HRV;                   // holds the time between beats
 volatile boolean Pulse = false;     // true when pulse wave is high, false when it's low
 volatile boolean QS = false;        // becomes true when pulse rate is determined. every 20 pulses
 volatile unsigned int sampleCounter = 0;  // counts time since last pulse in ms
+volatile unsigned long msCounter = 0;  // counts in ms from power on continuously
 
 
 void setup(){
-  // pinMode(13,OUTPUT);    // pin 13 will blink to your heartbeat!
-  // pinMode(11,OUTPUT);    // pin 11 will fade to your heartbeat!
   pinMode(LEDR_PIN, OUTPUT);
   pinMode(LEDG_PIN, OUTPUT);
   pinMode(LEDB_PIN, OUTPUT);
+  // 
+  analogWrite(LEDR_PIN, ANALOG_OUT_MAX);
+  analogWrite(LEDG_PIN, ANALOG_OUT_MAX);
+  analogWrite(LEDB_PIN, ANALOG_OUT_MAX);
   Serial.begin(115200);  // we agree to talk fast!
   interruptSetup();      // sets up to read Pulse Sensor signal every 1mS 
-  // UN-COMMENT THE NEXT LINE IF YOU ARE POWERING THE PulseSensor AT LOW VOLTAGE, 
-  // AND APPLY THAT VOLTAGE TO THE A-REF PIN
-  //analogReference(EXTERNAL);   
 
   // seed hrv history with a reasonable bpm so we can start smoothly
   for (int i = 0; i < HRV_HISTORY_LENGTH; i++) {
@@ -64,22 +64,23 @@ void setup(){
   // populate the color map such that we fade evenly from R -> G -> B
   // at any index r + g + b = 255
   // max brightness (based on circuit) is 0 (not 255) for any given LED
-  for (int i = 0; i < 256; i++) {
-    rgbColorMap[i][RED]       = i;
-    rgbColorMap[i][GREEN]     = 255-i;
-    rgbColorMap[i][BLUE]      = 255;
-    rgbColorMap[i+255][RED]   = 255;
-    rgbColorMap[i+255][GREEN] = i;
-    rgbColorMap[i+255][BLUE]  = 255-i;
+  for (int i = 0; i < NUM_RGB_COLORS; i++) {
+    rgbColorMap[i][GREEN]     = ANALOG_OUT_MAX; // when i = 0 G is off, and B is max
+    rgbColorMap[i][BLUE]      = map(ANALOG_OUT_MAX-i, 0, ANALOG_OUT_MAX, 200, ANALOG_OUT_MAX);;     // when i = 255 B is off and G is max
+    rgbColorMap[i][RED]       = map(i, 0, NUM_RGB_COLORS-1, 220, ANALOG_OUT_MAX);// leave this color off, only fading between B and G
   }
 
 }
 
 void loop(){
-  // sendDataToProcessing('S', Signal);   // send Processing the raw Pulse Sensor data
+  sendDataToProcessing('S', Signal);   // send Processing the raw Pulse Sensor data
+
+  // if we haven't had a heartbeat in a while
+  if(sampleCounter > 2000) {
+    
+  }
 
   if (QS == true){                     // Quantified Self flag is true when arduino finds a heartbeat
-    fadeRate = 255;                    // Set 'fadeRate' Variable to 255 to fade LED with pulse
     sendDataToProcessing('B',BPM);     // send the time between beats with a 'B' prefix
     sendDataToProcessing('Q',HRV);     // send heart rate with a 'Q' prefix
     fadeHrvLed();                      // ensure that fadeHrvLed() gets called before QS is reset (it can get set (interrupt) while function is runnin
@@ -132,66 +133,42 @@ void fadeHrvLed() {
     rgbIndex = constrain(rgbIndex, nextRgbIndex, lastRgbIndex); // we should never fade past our starting point or destination
   }
 
-
-  String toPrint = "";
-  toPrint = "min: " + String(hrvHistoryMin);
-  Serial.print(toPrint);
-  toPrint = ", max: " + String(hrvHistoryMax);
-  Serial.println(toPrint);  
-  Serial.print("lastRgbIndex: ");
-  Serial.println(lastRgbIndex);
-  Serial.print("nextRgbIndex: ");
-  Serial.println(nextRgbIndex);
-  Serial.print("rgbIndex: ");
-  Serial.println(rgbIndex);
-  Serial.print("hrvHistory[HRV_HISTORY_LENGTH-1]: ");
-  Serial.println(hrvHistory[HRV_HISTORY_LENGTH-1]);
-  Serial.print("hrvHistory[HRV_HISTORY_LENGTH-2]: ");
-  Serial.println(hrvHistory[HRV_HISTORY_LENGTH-2]);
-  Serial.print("fadeTime: ");
-  Serial.println(fadeTime);
-  Serial.print("sampleCounter: ");
-  Serial.println(sampleCounter);
-  Serial.println("-=-=-=-=-=-=-=-=-=");
-
-  // Set the R,G and B LEDs based on the three mapped values
-  analogWrite(LEDR_PIN, rgbColorMap[rgbIndex][RED]);
-  analogWrite(LEDG_PIN, rgbColorMap[rgbIndex][GREEN]);
-  analogWrite(LEDB_PIN, rgbColorMap[rgbIndex][BLUE]);
-
-}
-
-void setHrvLed() {
-  // seed hrvHistory vars with unrealistically high and low numbers
-  hrvHistoryMin = 200; 
-  hrvHistoryMax = 0;
-  // shift history buffer over, making room for new value
-  for (int i = 0; i < HRV_HISTORY_LENGTH-1; i ++) {
-    // if we have a new HRV value, shift over the history buffer
-    hrvHistory[i] = hrvHistory[i+1];
-    hrvHistoryMin = min(hrvHistoryMin, hrvHistory[i]);
-    hrvHistoryMax = max(hrvHistoryMax, hrvHistory[i]);
-  }
-  // if we have a new HRV value, stick it in this history buffer
-
-  int bpmFromHrv = 60000/HRV;
-  bpmFromHrv = constrain(bpmFromHrv, 30, 100); // constrain bpm to reasonable values
-  hrvHistory[HRV_HISTORY_LENGTH-1] = bpmFromHrv; // add the new HRV value as the BPM for the last two beats
-
-  int rgbIndex = int(map(bpmFromHrv, hrvHistoryMin, hrvHistoryMax, 0, NUM_RGB_COLORS-1));
-  // map() doesn't care if value goes out of bounds, which it can do at certain edge cases, such as the first value
-  rgbIndex = constrain(rgbIndex, 0, NUM_RGB_COLORS-1); 
+  /*
+// print diagnostics
+   String toPrint = "";
+   toPrint = "min: " + String(hrvHistoryMin);
+   Serial.print(toPrint);
+   toPrint = ", max: " + String(hrvHistoryMax);
+   Serial.println(toPrint);  
+   Serial.print("lastRgbIndex: ");
+   Serial.println(lastRgbIndex);
+   Serial.print("nextRgbIndex: ");
+   Serial.println(nextRgbIndex);
+   Serial.print("rgbIndex: ");
+   Serial.println(rgbIndex);
+   Serial.print("hrvHistory[HRV_HISTORY_LENGTH-1]: ");
+   Serial.println(hrvHistory[HRV_HISTORY_LENGTH-1]);
+   Serial.print("hrvHistory[HRV_HISTORY_LENGTH-2]: ");
+   Serial.println(hrvHistory[HRV_HISTORY_LENGTH-2]);
+   Serial.print("fadeTime: ");
+   Serial.println(fadeTime);
+   Serial.print("sampleCounter: ");
+   Serial.println(sampleCounter);
+   Serial.println("-=-=-=-=-=-=-=-=-=");
+   */
 
   // Set the R,G and B LEDs based on the three mapped values
   analogWrite(LEDR_PIN, rgbColorMap[rgbIndex][RED]);
   analogWrite(LEDG_PIN, rgbColorMap[rgbIndex][GREEN]);
   analogWrite(LEDB_PIN, rgbColorMap[rgbIndex][BLUE]);
+
 }
 
 void sendDataToProcessing(char symbol, int data ){
   Serial.print(symbol);      // symbol prefix tells Processing what type of data is coming
   Serial.println(data);      // the data to send
 }
+
 
 
 

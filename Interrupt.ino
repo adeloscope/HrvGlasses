@@ -24,6 +24,7 @@ ISR(TIMER1_OVF_vect){ // triggered every time Timer 1 overflows
   // Timer 1 makes sure that we take a reading every milisecond
   Signal = analogRead(pulsePin);  // read the Pulse Sensor 
   sampleCounter++;                // keep track of the time with this variable (ISR triggered every 1mS)
+  msCounter++;                    // continuously counts in ms.  useful for keeping track of time.
 
   //  NOW IT'S TIME TO LOOK FOR THE HEART BEAT
   if ( (Signal > 520) && (Pulse == false) && (sampleCounter > 500) ){  
